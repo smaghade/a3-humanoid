@@ -1,0 +1,23 @@
+# Demo route for the A3. Edit the steps to change the route.
+# Step types:
+#   forward / backward: <metres>      walk straight (facing does not change)
+#   side_left / side_right: <metres>  sidestep without turning
+#   turn_left / turn_right: <degrees> turn on the spot
+#   wait: <seconds>                   stand still
+#   stop: true                        stop
+speed: 0.3            # walking speed in m/s (the safety limit in robot.yaml still applies)
+
+steps:
+  - forward: 10       # 1. forward 10 m
+  - turn_left: 90     # 2. left 5 m
+  - forward: 5
+  - backward: 5       # 3. backward 5 m
+  - turn_right: 90    # 4. right 5 m
+  - forward: 5
+  - forward: 9        # 5. forward 9 m
+  - turn_left: 90     # 6. left 5 m
+  - forward: 5
+  - wait: 3           # 7. stop for 3 seconds
+  - turn_left: 90     # 8. left 15 m
+  - forward: 15
+  - stop: true

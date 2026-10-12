@@ -1,0 +1,226 @@
+{
+  "action": {
+    "q_des_step_abs_max": null,
+    "q_des_step_rms": null,
+    "raw_abs_max": null,
+    "raw_rms": null
+  },
+  "anchor_pose": {
+    "body_name": "pelvis_link",
+    "orientation_max_deg": null,
+    "orientation_mean_deg": null,
+    "position_max_m": null,
+    "position_mean_m": null,
+    "position_rmse_m": null
+  },
+  "fall": false,
+  "fall_heuristic": {
+    "abs_roll_or_pitch_above_deg": 60.0,
+    "root_height_below_m": 0.45
+  },
+  "fall_tick": null,
+  "fall_time_s": null,
+  "fps": 50.0,
+  "motion_name": "001_walk_front_slow.csv",
+  "motions": [
+    {
+      "action": {
+        "q_des_step_abs_max": null,
+        "q_des_step_rms": null,
+        "raw_abs_max": null,
+        "raw_rms": null
+      },
+      "anchor_pose": {
+        "body_name": "pelvis_link",
+        "orientation_max_deg": null,
+        "orientation_mean_deg": null,
+        "position_max_m": null,
+        "position_mean_m": null,
+        "position_rmse_m": null
+      },
+      "fall": false,
+      "fall_tick": null,
+      "fall_time_s": null,
+      "motion_name": "001_walk_front_slow.csv",
+      "num_policy_steps": 0,
+      "root_height": {
+        "mean": null,
+        "min": null
+      },
+      "root_pose": {
+        "orientation_max_deg": null,
+        "orientation_mean_deg": null,
+        "position_max_m": null,
+        "position_mean_m": null,
+        "position_rmse_m": null
+      },
+      "root_roll_pitch_abs_max_deg": null,
+      "tracking": {
+        "all_29_rmse": null,
+        "anchor_local_body_mpjpe": {
+          "max_error_mm": null,
+          "median_mpjpe_mm": null,
+          "mpjpe_m": null,
+          "mpjpe_mm": null,
+          "p95_mpjpe_mm": null
+        },
+        "anchor_local_body_mpjpe_by_group": {
+          "all_29": {
+            "max_error_mm": null,
+            "median_mpjpe_mm": null,
+            "mpjpe_m": null,
+            "mpjpe_mm": null,
+            "p95_mpjpe_mm": null
+          },
+          "arms": {
+            "max_error_mm": null,
+            "median_mpjpe_mm": null,
+            "mpjpe_m": null,
+            "mpjpe_mm": null,
+            "p95_mpjpe_mm": null
+          },
+          "legs": {
+            "max_error_mm": null,
+            "median_mpjpe_mm": null,
+            "mpjpe_m": null,
+            "mpjpe_mm": null,
+            "p95_mpjpe_mm": null
+          },
+          "waist": {
+            "max_error_mm": null,
+            "median_mpjpe_mm": null,
+            "mpjpe_m": null,
+            "mpjpe_mm": null,
+            "p95_mpjpe_mm": null
+          }
+        },
+        "arms_rmse": null,
+        "global_body_mpjpe": {
+          "max_error_mm": null,
+          "median_mpjpe_mm": null,
+          "mpjpe_m": null,
+          "mpjpe_mm": null,
+          "p95_mpjpe_mm": null
+        },
+        "legs_rmse": null,
+        "mpjpe_g": {
+          "max_error_mm": null,
+          "median_mpjpe_mm": null,
+          "mpjpe_m": null,
+          "mpjpe_mm": null,
+          "p95_mpjpe_mm": null
+        },
+        "mpjpe_l": {
+          "max_error_mm": null,
+          "median_mpjpe_mm": null,
+          "mpjpe_m": null,
+          "mpjpe_mm": null,
+          "p95_mpjpe_mm": null
+        },
+        "q_des_vs_ref": {
+          "all_29_rmse": null,
+          "arms_rmse": null,
+          "legs_rmse": null,
+          "waist_rmse": null
+        },
+        "q_state_vs_ref": {
+          "all_29_rmse": null,
+          "arms_rmse": null,
+          "legs_rmse": null,
+          "waist_rmse": null
+        },
+        "waist_rmse": null
+      }
+    }
+  ],
+  "num_policy_steps": 0,
+  "root_height": {
+    "mean": null,
+    "min": null
+  },
+  "root_pose": {
+    "orientation_max_deg": null,
+    "orientation_mean_deg": null,
+    "position_max_m": null,
+    "position_mean_m": null,
+    "position_rmse_m": null
+  },
+  "root_roll_pitch_abs_max_deg": null,
+  "schema_version": 1,
+  "tracking": {
+    "all_29_rmse": null,
+    "anchor_local_body_mpjpe": {
+      "max_error_mm": null,
+      "median_mpjpe_mm": null,
+      "mpjpe_m": null,
+      "mpjpe_mm": null,
+      "p95_mpjpe_mm": null
+    },
+    "anchor_local_body_mpjpe_by_group": {
+      "all_29": {
+        "max_error_mm": null,
+        "median_mpjpe_mm": null,
+        "mpjpe_m": null,
+        "mpjpe_mm": null,
+        "p95_mpjpe_mm": null
+      },
+      "arms": {
+        "max_error_mm": null,
+        "median_mpjpe_mm": null,
+        "mpjpe_m": null,
+        "mpjpe_mm": null,
+        "p95_mpjpe_mm": null
+      },
+      "legs": {
+        "max_error_mm": null,
+        "median_mpjpe_mm": null,
+        "mpjpe_m": null,
+        "mpjpe_mm": null,
+        "p95_mpjpe_mm": null
+      },
+      "waist": {
+        "max_error_mm": null,
+        "median_mpjpe_mm": null,
+        "mpjpe_m": null,
+        "mpjpe_mm": null,
+        "p95_mpjpe_mm": null
+      }
+    },
+    "arms_rmse": null,
+    "global_body_mpjpe": {
+      "max_error_mm": null,
+      "median_mpjpe_mm": null,
+      "mpjpe_m": null,
+      "mpjpe_mm": null,
+      "p95_mpjpe_mm": null
+    },
+    "legs_rmse": null,
+    "mpjpe_g": {
+      "max_error_mm": null,
+      "median_mpjpe_mm": null,
+      "mpjpe_m": null,
+      "mpjpe_mm": null,
+      "p95_mpjpe_mm": null
+    },
+    "mpjpe_l": {
+      "max_error_mm": null,
+      "median_mpjpe_mm": null,
+      "mpjpe_m": null,
+      "mpjpe_mm": null,
+      "p95_mpjpe_mm": null
+    },
+    "q_des_vs_ref": {
+      "all_29_rmse": null,
+      "arms_rmse": null,
+      "legs_rmse": null,
+      "waist_rmse": null
+    },
+    "q_state_vs_ref": {
+      "all_29_rmse": null,
+      "arms_rmse": null,
+      "legs_rmse": null,
+      "waist_rmse": null
+    },
+    "waist_rmse": null
+  }
+}
