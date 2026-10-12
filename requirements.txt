@@ -1,0 +1,15 @@
+# AI + simulation packages for robot_venv (ROS 2 Jazzy, Ubuntu 24.04)
+# ROS 2 itself is installed with apt, not pip.
+--extra-index-url https://download.pytorch.org/whl/cu124
+numpy<2
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124
+opencv-python==4.11.0.86
+mujoco==3.15.0
+ultralytics==8.4.174
+pydantic==2.14.0
+pytest
+pyyaml
+faster-whisper==1.2.1
+sounddevice==0.5.6
+qpsolvers
