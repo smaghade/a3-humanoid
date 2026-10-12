@@ -3,3 +3,6 @@ ros2_ws/install/
 ros2_ws/log/
 bags/
 A3-A3U-robot-model/
+__pycache__/
+*.pyc
+.pytest_cache/
