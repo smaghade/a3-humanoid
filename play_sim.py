@@ -1,12 +1,15 @@
 """Drive the A3 in the MuJoCo viewer through the safety supervisor - with logging.
 
-Keys work in BOTH places:
-  MuJoCo window: arrows = drive, Enter = stop, Space = E-STOP, Home = reset e-stop
-  Terminal:      W/S/A/D = drive, Q = stop, Space = E-STOP, R = reset, X = exit
+Keys work in BOTH the MuJoCo window and the terminal:
+  Arrows (or W/S/A/D in terminal) = walk forward/back, turn left/right
+  Enter (or Q)  = stop
+  Space         = PAUSE (emergency stop)
+  R             = RESUME (clear the emergency stop), then use the arrows again
+  X (terminal)  = exit
 
 Every run writes two files in logs/:
-  run_<date>_events.txt  - each action in plain words (forward, turn left, stop...)
-  run_<date>.csv         - position 10 times per second (for plotting)
+  run_<date>_events.txt  - each action in plain words
+  run_<date>.csv         - position 10 times per second (for plot_log.py)
 """
 import csv
 import datetime
@@ -27,9 +30,14 @@ from safety.supervisor import SafetySupervisor
 
 STEP_V, STEP_W, DT = 0.1, 0.25, 0.02
 LOG_EVERY = 5                                   # write a path row every 5 frames = 0.1 s
-WINDOW_KEYS = {265: "w", 264: "s", 263: "a", 262: "d", 257: "q", 32: " ", 268: "r"}
+# MuJoCo window key codes -> same commands as the terminal keys
+WINDOW_KEYS = {265: "w", 264: "s", 263: "a", 262: "d",   # arrows
+               257: "q",                                  # Enter = stop
+               32: " ",                                   # Space = pause (e-stop)
+               82: "r", 268: "r"}                         # R or Home = resume
 EVENT_NAMES = {"w": "FORWARD +", "s": "BACK / SLOWER", "a": "TURN LEFT", "d": "TURN RIGHT",
-               "q": "STOP", " ": "EMERGENCY STOP", "r": "RESET E-STOP", "x": "EXIT"}
+               "q": "STOP", " ": "PAUSE (E-STOP)", "r": "RESUME", "x": "EXIT"}
+MOVE_KEYS = {"w", "s", "a", "d"}
 
 keys = queue.Queue()
 
@@ -45,7 +53,7 @@ def read_terminal_key():
 
 
 def facing_deg(yaw):
-    return (math.degrees(yaw) + 180) % 360 - 180   # keep between -180 and +180
+    return (math.degrees(yaw) + 180) % 360 - 180
 
 
 # ---------- setup ----------
@@ -77,6 +85,12 @@ def log_event(text):
 
 def handle(key):
     k = key.lower()
+
+    # While paused, movement keys are blocked - tell the user how to resume
+    if safe.estopped and k in MOVE_KEYS:
+        state["last"] = "PAUSED - press R"
+        return
+
     state["last"] = EVENT_NAMES.get(k, repr(key))
     if k == "w":
         state["vx"] += STEP_V
@@ -89,15 +103,18 @@ def handle(key):
     elif k == "q":
         state["vx"] = state["wz"] = 0.0
         safe.stop()
-    elif k == " ":
+    elif k == " ":                                   # pause = emergency stop
         state["vx"] = state["wz"] = 0.0
         safe.emergency_stop()
-    elif k == "r":
+    elif k == "r":                                   # resume: clear e-stop, start from standstill
+        state["vx"] = state["wz"] = 0.0
         safe.reset_emergency_stop()
     elif k == "x":
         state["exit"] = True
+
+    state["vx"], state["wz"] = round(state["vx"], 2), round(state["wz"], 2)
     safe.set_velocity(state["vx"], 0.0, state["wz"])
-    state["vx"], _, state["wz"] = robot.velocity
+    state["vx"], _, state["wz"] = robot.velocity      # what safety allowed
     if k in EVENT_NAMES:
         log_event(EVENT_NAMES[k])
 
@@ -128,20 +145,20 @@ try:
             state["vx"], _, state["wz"] = robot.velocity
             robot.step(DT)
 
-            with viewer.lock():
+            with viewer.lock():                       # camera follows the robot
                 viewer.cam.lookat[:] = (robot.pose.x, robot.pose.y, robot.height * 0.6)
             viewer.sync()
 
             p = robot.pose
-            status = "E-STOP" if safe.estopped else "ok"
+            status = "PAUSED (E-STOP)" if safe.estopped else "ok"
             if frame % LOG_EVERY == 0:
                 path_log.writerow([f"{time.time() - t_start:.2f}", f"{p.x:.3f}", f"{p.y:.3f}",
                                    f"{facing_deg(p.yaw):.1f}", f"{state['vx']:.2f}",
-                                   f"{state['wz']:.2f}", status])
+                                   f"{state['wz']:.2f}", "E-STOP" if safe.estopped else "ok"])
             frame += 1
-            print(f"\rlast: {state['last']:15s} | speed {state['vx']:+.2f} m/s "
+            print(f"\rlast: {state['last']:17s} | speed {state['vx']:+.2f} m/s "
                   f"turn {state['wz']:+.2f} rad/s | x={p.x:+.2f} y={p.y:+.2f} "
-                  f"facing {facing_deg(p.yaw):+4.0f} deg | {status}     ", end="", flush=True)
+                  f"facing {facing_deg(p.yaw):+4.0f} deg | {status:15s}", end="", flush=True)
             time.sleep(max(0.0, DT - (time.time() - start)))
 finally:
     log_event("END")
