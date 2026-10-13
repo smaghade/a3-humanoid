@@ -8,3 +8,5 @@ __pycache__/
 .pytest_cache/
 logs/
 sonic_for_a3/
+data/
+data/
