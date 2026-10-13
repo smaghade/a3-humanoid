@@ -41,6 +41,8 @@ from simulation.scene import CAMERA_NAME, build_scene, camera_intrinsics
 ap = argparse.ArgumentParser()
 ap.add_argument("--objects", action="store_true", help="add a table, bottles and a cup")
 ap.add_argument("--no-eyes", action="store_true", help="no camera window")
+ap.add_argument("--detect", action="store_true", help="find bottles and cups in the camera picture")
+ap.add_argument("--target", default="red bottle", help="object to look for, e.g. \"blue bottle\"")
 args = ap.parse_args()
 
 STEP_V, STEP_W, DT = 0.1, 0.25, 0.02
@@ -84,12 +86,16 @@ safe.stand()
 state = {"vx": 0.0, "wz": 0.0, "last": "-", "exit": False}
 
 eyes = None
+detector = None
 if not args.no_eyes:
     eyes = mujoco.Renderer(model, height=EYE_H, width=EYE_W)    # created before the viewer
     intr = camera_intrinsics(model, EYE_W, EYE_H)
     with open("config/camera.yaml", "w") as f:
         yaml.safe_dump({"head_camera": intr}, f, sort_keys=False)
     os.makedirs("data/snapshots", exist_ok=True)
+    if args.detect:
+        from perception.detector import ObjectDetector, draw
+        detector = ObjectDetector()
 
 os.makedirs("logs", exist_ok=True)
 stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -194,6 +200,12 @@ try:
                     rgb = eyes.render()
                 last_eye_image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
                 shown = last_eye_image.copy()
+                if detector is not None:                         # Day 10: find objects
+                    found = detector.detect(last_eye_image)
+                    draw(shown, found, args.target)
+                    hit = detector.find(found, args.target)
+                    state["seen"] = (f"{args.target} at pixel {hit['centre']}" if hit
+                                     else f"{args.target}: not seen")
                 yaw, pitch = robot.get_head()
                 cv2.putText(shown, f"head yaw {yaw:+.0f} pitch {pitch:+.0f} deg", (10, 24),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
@@ -211,7 +223,7 @@ try:
             frame += 1
             print(f"\rlast: {state['last']:17s} | speed {state['vx']:+.2f} m/s "
                   f"turn {state['wz']:+.2f} rad/s | x={p.x:+.2f} y={p.y:+.2f} "
-                  f"facing {facing_deg(p.yaw):+4.0f} deg | {status:15s}", end="", flush=True)
+                  f"facing {facing_deg(p.yaw):+4.0f} deg | {status:15s} {state.get('seen', ''):34s}", end="", flush=True)
             time.sleep(max(0.0, DT - (time.time() - start)))
 finally:
     log_event("END")
