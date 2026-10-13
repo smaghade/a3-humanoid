@@ -39,10 +39,13 @@ LIFT = 0.15              # lift height (m)
 ARM_STEP = 0.004         # max joint change per step (rad); smaller = slower, smoother arm
 BOTTLE_RADIUS = 0.035    # used to go from the bottle's front surface to its centre
 HEAD_SCAN = [0, 40, -40]           # head positions tried before turning the body (deg)
+MIN_HEIGHT, MAX_HEIGHT = 0.3, 1.8  # a real bottle on a table is in this height range (m)
 EYES_WINDOW = "A3 EYES - what the robot sees"
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--target", default="red_bottle")
+ap.add_argument("--hand", choices=["auto", "left", "right"], default="auto",
+                help="auto = left hand for bottles on the left, right hand for bottles on the right")
 ap.add_argument("--start-yaw", type=float, default=0.0, help="robot's starting direction (deg)")
 ap.add_argument("--no-vision", action="store_true", help="ask the simulator instead of using the camera")
 ap.add_argument("--speedup", type=float, default=1.0)
@@ -186,10 +189,13 @@ def find_with_eyes():
             for _ in range(10):                      # let the view settle
                 tick()
             found, depth = look(f"searching for {target_words}...")
-            hit = detector.find(found, target_words)
-            if hit:
+            for hit in detector.find_all(found, target_words):       # only the requested colour
                 u, v = hit["centre"]
                 point = camera.locate(robot.d, depth, u, v, object_radius=BOTTLE_RADIUS)
+                if point is None or not (MIN_HEIGHT < point[2] < MAX_HEIGHT):
+                    height = "unknown" if point is None else f"{point[2]:.2f} m"
+                    say(f"   ignored a '{target_words}' look-alike at height {height} (not on a table)")
+                    continue
                 say(f"   SEEN at pixel ({u},{v}) [{hit['source']}], head {head_yaw:+d} deg")
                 robot.set_head(yaw_deg=0, pitch_deg=0)
                 return point
@@ -217,7 +223,8 @@ def run():
         err = np.linalg.norm(bottle - truth) * 100
         say(f"2. LOCATED at x={bottle[0]:.2f} y={bottle[1]:+.2f} z={bottle[2]:.2f} "
             f"(error vs truth {err:.1f} cm)")
-    side = "left" if bottle[1] >= robot.pose.y else "right"
+    # which hand: the robot will face +x at the table, so +y is its LEFT side
+    side = args.hand if args.hand != "auto" else ("left" if bottle[1] >= 0 else "right")
 
     # 3. walk to a spot in front of it and face the table
     stand = (bottle[0] - STAND_BACK, bottle[1] - (SIDE_OFFSET if side == "left" else -SIDE_OFFSET))

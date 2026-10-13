@@ -12,11 +12,14 @@ import numpy as np
 
 # HSV colour ranges (OpenCV hue is 0-180). Red wraps around 0, so it has two ranges.
 COLOURS = {
-    "red":   [((0, 120, 70), (10, 255, 255)), ((170, 120, 70), (180, 255, 255))],
-    "blue":  [((100, 120, 70), (130, 255, 255))],
-    "yellow": [((20, 120, 70), (35, 255, 255))],
-    "green": [((40, 80, 70), (80, 255, 255))],
+    "red":    [((0, 170, 70), (10, 255, 255)), ((170, 170, 70), (180, 255, 255))],
+    "blue":   [((100, 170, 70), (130, 255, 255))],
+    "yellow": [((20, 170, 70), (35, 255, 255))],
+    "green":  [((40, 170, 70), (80, 255, 255))],
 }
+# Saturation >= 170 means "strong, pure colour". The blue-grey floor tiles (saturation
+# about 128) and the brown table (about 153) are below it, so they are never mistaken
+# for a bottle; the bottles are about 226.
 BOX_COLOURS = {"red": (0, 0, 255), "blue": (255, 80, 0), "yellow": (0, 220, 255), "green": (0, 200, 0)}
 
 
@@ -101,10 +104,17 @@ class ObjectDetector:
         return detections
 
     @staticmethod
+    def find_all(detections, name):
+        """All matches for a request like 'blue bottle', best (largest) first."""
+        matches = [d for d in detections if d["name"] == name]
+        return sorted(matches, key=lambda d: (d["box"][2] - d["box"][0]) * (d["box"][3] - d["box"][1]),
+                      reverse=True)
+
+    @staticmethod
     def find(detections, name):
         """Best match for a request like 'red bottle' (or None)."""
-        matches = [d for d in detections if d["name"] == name]
-        return max(matches, key=lambda d: d["conf"]) if matches else None
+        matches = ObjectDetector.find_all(detections, name)
+        return matches[0] if matches else None
 
 
 def _overlap(a, b):
