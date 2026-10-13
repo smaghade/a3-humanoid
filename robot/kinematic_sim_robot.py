@@ -25,6 +25,7 @@ class KinematicSimRobot(RobotInterface):
         self.pose = Pose2D()
         self.velocity = (0.0, 0.0, 0.0)
         self.phase = 0.0
+        self.animate_arms = True        # set False while the arms are used for grasping
         self.joint = {name: self.m.joint(name).qposadr[0] for name in (
             "left_hip_pitch_joint", "right_hip_pitch_joint",
             "left_knee_joint", "right_knee_joint",
@@ -87,8 +88,9 @@ class KinematicSimRobot(RobotInterface):
         q[j["right_hip_pitch_joint"]] = 0.35 * amp * swing
         q[j["left_knee_joint"]] = 0.6 * amp * max(0.0, swing)
         q[j["right_knee_joint"]] = 0.6 * amp * max(0.0, -swing)
-        q[j["left_shoulder_pitch_joint"]] = 0.3 * amp * swing
-        q[j["right_shoulder_pitch_joint"]] = -0.3 * amp * swing
+        if self.animate_arms:
+            q[j["left_shoulder_pitch_joint"]] = 0.3 * amp * swing
+            q[j["right_shoulder_pitch_joint"]] = -0.3 * amp * swing
         mujoco.mj_forward(self.m, self.d)
         q[b + 2] -= self._lowest_point_z()
         mujoco.mj_forward(self.m, self.d)
