@@ -14,9 +14,10 @@ import numpy as np
 COLOURS = {
     "red":   [((0, 120, 70), (10, 255, 255)), ((170, 120, 70), (180, 255, 255))],
     "blue":  [((100, 120, 70), (130, 255, 255))],
+    "yellow": [((20, 120, 70), (35, 255, 255))],
     "green": [((40, 80, 70), (80, 255, 255))],
 }
-BOX_COLOURS = {"red": (0, 0, 255), "blue": (255, 80, 0), "green": (0, 200, 0)}
+BOX_COLOURS = {"red": (0, 0, 255), "blue": (255, 80, 0), "yellow": (0, 220, 255), "green": (0, 200, 0)}
 
 
 def colour_mask(bgr, colour):
@@ -85,7 +86,7 @@ class ObjectDetector:
                     d["colour"] = colour
                     break
         # colour fallback: tall coloured blobs that YOLO missed are probably bottles
-        for colour in ("red", "blue"):
+        for colour in ("red", "blue", "yellow"):
             for box in find_colour_blobs(bgr, colour):
                 if any(_overlap(box, d["box"]) > 0.3 for d in detections):
                     continue

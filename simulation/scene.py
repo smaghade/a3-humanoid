@@ -8,7 +8,7 @@ import numpy as np
 HEAD_BODY = "head_pitch_Link"
 CAMERA_NAME = "head_camera"
 CAMERA_POS = [0.09, 0.0, -0.02]          # where the stereo-camera shape sits on the head
-OBJECTS = ["red_bottle", "blue_bottle", "cup"]
+OBJECTS = ["red_bottle", "blue_bottle", "yellow_bottle", "cup"]
 
 
 def _find_body(spec, name):
@@ -47,6 +47,7 @@ def build_scene(mjcf_path, with_objects=True, camera_fovy=70.0, camera_tilt_deg=
     table.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.35, 0.6, 0.375], rgba=[0.55, 0.38, 0.22, 1])
     _add_object(world, "red_bottle", [1.05, 0.18, 0.87], 0.035, 0.12, [0.85, 0.1, 0.1, 1])
     _add_object(world, "blue_bottle", [1.05, -0.18, 0.87], 0.035, 0.12, [0.1, 0.25, 0.85, 1])
+    _add_object(world, "yellow_bottle", [1.05, 0.38, 0.87], 0.035, 0.12, [0.95, 0.85, 0.1, 1])
     _add_object(world, "cup", [1.0, 0.0, 0.80], 0.045, 0.05, [0.95, 0.95, 0.95, 1])
     model = spec.compile()
 
