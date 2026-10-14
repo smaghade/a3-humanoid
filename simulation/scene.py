@@ -9,6 +9,12 @@ HEAD_BODY = "head_pitch_Link"
 CAMERA_NAME = "head_camera"
 CAMERA_POS = [0.09, 0.0, -0.02]          # where the stereo-camera shape sits on the head
 OBJECTS = ["red_bottle", "blue_bottle", "yellow_bottle", "cup"]
+TABLE_HEIGHT = 0.75
+# Known tables (the robot's "map"). front = direction the robot faces when standing at it.
+TABLES = {
+    "table_1": {"center": (1.20, 0.00), "half": (0.35, 0.60), "front": (1.0, 0.0)},   # with the bottles
+    "table_2": {"center": (0.00, 1.60), "half": (0.60, 0.35), "front": (0.0, 1.0)},   # empty, on the left
+}
 
 
 def _find_body(spec, name):
@@ -43,6 +49,10 @@ def build_scene(mjcf_path, with_objects=True, camera_fovy=70.0, camera_tilt_deg=
         return spec.compile(), spec
 
     world = spec.worldbody
+    t2 = TABLES["table_2"]                                    # the second, empty table
+    table2 = world.add_body(name="table_2", pos=[*t2["center"], TABLE_HEIGHT / 2])
+    table2.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[*t2["half"], TABLE_HEIGHT / 2],
+                    rgba=[0.45, 0.45, 0.50, 1])
     table = world.add_body(name="table", pos=[1.2, 0.0, 0.375])
     table.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.35, 0.6, 0.375], rgba=[0.55, 0.38, 0.22, 1])
     _add_object(world, "red_bottle", [1.05, 0.18, 0.87], 0.035, 0.12, [0.85, 0.1, 0.1, 1])

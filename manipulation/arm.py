@@ -29,14 +29,20 @@ class Arm:
         self.hand = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{side}_wrist_yaw_Link")
         self.home = data.qpos[self.qadr].copy()
 
+    def point(self, local=PALM_OFFSET):
+        """World position of a point fixed to the hand (given in the wrist frame)."""
+        return self.d.xpos[self.hand] + self.d.xmat[self.hand].reshape(3, 3) @ np.asarray(local)
+
     def palm(self):
         """World position of the palm centre."""
-        return self.d.xpos[self.hand] + self.d.xmat[self.hand].reshape(3, 3) @ PALM_OFFSET
+        return self.point(PALM_OFFSET)
 
-    def step_towards(self, target, max_step=0.03, damping=0.05):
-        """One small IK step towards the target. Returns the remaining distance (m)."""
+    def step_towards(self, target, max_step=0.03, damping=0.05, tool=PALM_OFFSET):
+        """One small IK step that moves the hand point `tool` (default: palm) towards the target.
+        With tool = a held object's centre, this places the OBJECT at the target.
+        Returns the remaining distance (m)."""
         mujoco.mj_forward(self.m, self.d)
-        palm = self.palm()
+        palm = self.point(tool)
         err = np.asarray(target) - palm
         jacp = np.zeros((3, self.m.nv))
         mujoco.mj_jac(self.m, self.d, jacp, None, palm, self.hand)
@@ -46,7 +52,7 @@ class Arm:
         q = np.clip(self.d.qpos[self.qadr] + dq, self.lo, self.hi)   # never past a joint limit
         self.d.qpos[self.qadr] = q
         mujoco.mj_forward(self.m, self.d)
-        return float(np.linalg.norm(np.asarray(target) - self.palm()))
+        return float(np.linalg.norm(np.asarray(target) - self.point(tool)))
 
     def step_home(self, max_step=0.03):
         """One small step back to the starting arm pose. Returns remaining joint error."""
@@ -58,27 +64,38 @@ class Arm:
 
 
 class MagicGrasp:
-    """Attach an object to the hand (kinematically) and release it again."""
+    """Attach an object to the hand (kinematically) and release it again.
+
+    The object's position is stored relative to the hand, so it stays in the hand when
+    the arm moves AND when the robot turns or walks while carrying it.
+    """
 
     def __init__(self, model, data, obj_name):
         self.m, self.d = model, data
+        self.name = obj_name
         self.body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, obj_name)
         self.qadr = model.jnt_qposadr[model.body_jntadr[self.body]]
         self.attached_to = None
-        self.offset = None
+        self.local = None              # object centre in the wrist frame
 
     def position(self):
         return self.d.xpos[self.body].copy()
 
     def attach(self, arm):
         self.attached_to = arm
-        self.offset = self.position() - arm.palm()
+        rot = self.d.xmat[arm.hand].reshape(3, 3)
+        self.local = rot.T @ (self.position() - self.d.xpos[arm.hand])
 
     def update(self):
-        """Call every step: an attached object follows the palm."""
+        """Call every step: an attached object follows the hand (position only; stays upright)."""
         if self.attached_to is not None:
-            self.d.qpos[self.qadr:self.qadr + 3] = self.attached_to.palm() + self.offset
+            self.d.qpos[self.qadr:self.qadr + 3] = self.attached_to.point(self.local)
+            self.d.qpos[self.qadr + 3:self.qadr + 7] = (1, 0, 0, 0)
             mujoco.mj_forward(self.m, self.d)
 
-    def release(self):
+    def release(self, put_at=None):
+        """Let go. put_at = exact spot to leave the object at (upright)."""
         self.attached_to = None
+        if put_at is not None:
+            self.d.qpos[self.qadr:self.qadr + 7] = [*put_at, 1, 0, 0, 0]
+            mujoco.mj_forward(self.m, self.d)
