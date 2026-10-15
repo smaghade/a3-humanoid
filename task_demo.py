@@ -9,13 +9,19 @@ Example instructions:
 What happens (a first version of plan Days 15-16):
   1. PLANNER  : the sentence -> a list of actions from a fixed menu (checked)
   2. EXECUTOR : runs each action, reports SUCCESS / FAILURE + reason, stops safely on failure
-  Actions: FIND, APPROACH, GRASP, LIFT, GO_TO_TABLE, PLACE, RETURN
+  Actions: GO_TO_AREA, FIND, APPROACH, GRASP, LIFT, GO_TO_TABLE, PLACE, RETURN
 
 Usage:
   python task_demo.py --say "pick the red bottle and keep it on the empty table"
   python task_demo.py                 # asks you for instructions, one after another
   python task_demo.py --no-vision     # simulator gives object positions
   python task_demo.py --speedup 3 | --no-viewer
+
+Field mode (real-world style): start far away with stones in between
+  python task_demo.py --start-distance 70 --stones 15 --speedup 5 \
+         --say "pick the red bottle from the table and keep it on the empty table"
+  While walking, the robot recognises the stones with its depth camera, draws them on its
+  own map (window "A3 MAP") and plans a path around them (A*). It walks back the same way.
 
 Tables are known places (the robot's map): table_1 has the bottles, table_2 is empty (grey).
 Keys in the MuJoCo window: Space = pause (e-stop), R = resume.
@@ -48,19 +54,27 @@ MIN_HEIGHT, MAX_HEIGHT = 0.3, 1.8
 SPOT_SHIFTS = [0.0, -0.15, 0.15, -0.30, 0.30]   # free places along a table, from its middle
 EYES_WINDOW = "A3 EYES - what the robot sees"
 COLOURS = ["red", "blue", "yellow"]
+MAP_WINDOW = "A3 MAP - what the robot knows"
+STAGING_BACK = 1.5       # stop this far in front of a table before searching it (m)
+FAR = 3.0                # farther than this -> use the map + path planner to walk
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--say", default=None, help="the instruction, in quotes")
 ap.add_argument("--no-vision", action="store_true")
 ap.add_argument("--speedup", type=float, default=1.0)
 ap.add_argument("--no-viewer", action="store_true")
+ap.add_argument("--start-distance", type=float, default=0.0,
+                help="start this many metres in front of the bottle table (e.g. 70)")
+ap.add_argument("--stones", type=int, default=None,
+                help="number of stones/boxes on the way (default: 1 per 5 m when far away)")
+ap.add_argument("--seed", type=int, default=3, help="changes where the stones are")
 args = ap.parse_args()
 
 
 # =====================================================================================
 # PLANNER: sentence -> checked list of actions
 # =====================================================================================
-ALLOWED = {"FIND", "APPROACH", "GRASP", "LIFT", "GO_TO_TABLE", "PLACE", "RETURN"}
+ALLOWED = {"GO_TO_AREA", "FIND", "APPROACH", "GRASP", "LIFT", "GO_TO_TABLE", "PLACE", "RETURN"}
 TABLE_WORDS = {
     "table_2": ["table 2", "table two", "second table", "other table", "empty table", "new table",
                 "grey table", "gray table", "another table"],
@@ -86,7 +100,7 @@ def make_plan(sentence):
         dest = "table_2"                              # "move it" with no table named -> the other table
     if dest is None:
         return None, "Where should I put it? Say for example 'on table 2' or 'on the empty table'."
-    plan = [("FIND", target), ("APPROACH", target), ("GRASP", target), ("LIFT", target),
+    plan = [("GO_TO_AREA", target), ("FIND", target), ("APPROACH", target), ("GRASP", target), ("LIFT", target),
             ("GO_TO_TABLE", dest), ("PLACE", dest), ("RETURN", "start")]
     assert all(a in ALLOWED for a, _ in plan)        # only actions from the fixed menu
     return plan, f"Plan: move the {colours[0]} bottle to {dest.replace('_', ' ')}, then come back."
@@ -97,8 +111,38 @@ def make_plan(sentence):
 # =====================================================================================
 with open("config/robot.yaml") as f:
     cfg = yaml.safe_load(f)
-model, _ = build_scene(cfg["robot"]["mjcf"], with_objects=True)
+
+
+def make_stones(start_x, n, seed):
+    """Random stones and boxes between the start and the tables (like a real room/yard)."""
+    rng = np.random.default_rng(seed)
+    stones, end_x = [], TABLES["table_1"]["center"][0] - TABLES["table_1"]["half"][0] - STAGING_BACK - 1.5
+    for k in range(n):
+        x = rng.uniform(start_x + 4.0, end_x)
+        y = rng.normal(0.0, 0.8) if k % 3 else rng.uniform(-0.2, 0.2)    # every 3rd right on the way
+        grey = rng.uniform(0.30, 0.55)
+        rgba = [grey + rng.uniform(0, 0.06), grey, grey - rng.uniform(0, 0.06), 1]
+        if k % 4 == 3:
+            half = rng.uniform(0.15, 0.30)
+            stones.append({"name": f"box_{k}", "shape": "box", "pos": [x, y, half],
+                           "size": [half, half * rng.uniform(0.8, 1.5), half], "rgba": rgba})
+        else:
+            r = rng.uniform(0.15, 0.40)
+            stones.append({"name": f"stone_{k}", "shape": "stone",
+                           "pos": [x, y, r * 0.5], "size": [r, r * rng.uniform(0.7, 1.2), r * 0.6],
+                           "rgba": rgba})
+    return stones
+
+
+START_X = TABLES["table_1"]["center"][0] - TABLES["table_1"]["half"][0] - args.start_distance \
+    if args.start_distance > 0 else 0.0
+n_stones = args.stones if args.stones is not None else (int(args.start_distance // 5) if args.start_distance > 5 else 0)
+STONES = make_stones(START_X, n_stones, args.seed) if n_stones else []
+model, _ = build_scene(cfg["robot"]["mjcf"], with_objects=True, obstacles=STONES)
+model.vis.map.znear = 0.02 / model.stat.extent      # camera sees from 2 cm, even in a big scene
 robot = KinematicSimRobot(model=model)
+robot.pose.x = START_X
+robot.step(0.0)
 safe = SafetySupervisor(robot, cfg)
 safe.stand()
 START = (robot.pose.x, robot.pose.y, robot.pose.yaw)
@@ -110,12 +154,27 @@ if not args.no_vision:
     camera = DepthCamera(model, CAMERA_NAME)
     detector = ObjectDetector()
 
+from navigation.grid_planner import OccupancyGrid
+from navigation.obstacles import ObstacleDetector, draw_obstacles
+grid = OccupancyGrid((min(START_X, 0.0) - 5, 5.0), (-6.0, 6.0))
+obstacle_eye = ObstacleDetector(camera) if camera is not None else None
+if camera is None:                                    # no camera: give the robot the true map
+    for ob in STONES:
+        cx, cy, _ = ob["pos"]
+        r = max(ob["size"][:2])
+        pts = [[cx + dx, cy + dy, 0.1] for dx in np.arange(-r, r + 0.01, 0.05)
+               for dy in np.arange(-r, r + 0.01, 0.05)]
+        grid.add_points(np.array(pts))
+seen_obstacles = []                                   # what the robot recognised on the way
+nav = {"active": False, "path": None, "goal": None}
+
 viewer = None
 frame = 0
 t0 = time.time()
 grasps = {name: MagicGrasp(model, robot.d, name) for name in OBJECTS if name.endswith("bottle")}
 holding = {"grasp": None, "arm": None}          # what the robot currently holds
 HOME = {name: g.position() for name, g in grasps.items()}   # where each bottle started
+LAST_TABLE = {name: "table_1" for name in grasps}           # where the robot last saw/put each bottle
 
 
 def say(text):
@@ -169,7 +228,7 @@ def tick():
         viewer.sync()
         if not viewer.is_running():
             raise KeyboardInterrupt
-        if camera is not None and frame % 5 == 0:
+        if camera is not None and frame % 5 == 0 and not nav["active"]:
             look()
         time.sleep(DT / args.speedup)
     else:
@@ -272,10 +331,143 @@ def free_spot(table, target=None):
     return None
 
 
+
+# =====================================================================================
+# NAVIGATION with obstacle recognition (Day 17): depth camera -> map -> A* path
+# =====================================================================================
+def sense():
+    """Look ahead with the depth camera, recognise obstacles, add them to the map."""
+    if obstacle_eye is None:
+        return []
+    if viewer is not None:
+        with viewer.lock():
+            rgb, depth = camera.capture(robot.d)
+    else:
+        rgb, depth = camera.capture(robot.d)
+    here = (robot.pose.x, robot.pose.y)
+    pts, objects = obstacle_eye.detect(robot.d, depth, here)
+    grid.add_points(pts)
+    for o in objects:                                    # log each NEW obstacle once
+        if o["distance"] > 4.0:
+            continue
+        if all(np.hypot(*(o["centre"] - k["centre"])) > 0.7 for k in seen_obstacles):
+            seen_obstacles.append(o)
+            say(f"   RECOGNISED {o['kind']} #{len(seen_obstacles)}: {o['height']:.2f} m high, "
+                f"seen {o['distance']:.1f} m away at x={o['centre'][0]:.1f} y={o['centre'][1]:+.1f}")
+    if viewer is not None:
+        bgr = draw_obstacles(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), objects)
+        cv2.putText(bgr, f"walking - obstacles recognised so far: {len(seen_obstacles)}", (10, 24),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.imshow(EYES_WINDOW, bgr)
+        draw_map()
+        cv2.waitKey(1)
+    return objects
+
+
+def draw_map(half=7.0, ppm=40):
+    """Top-down map around the robot: obstacles, safety margin, planned path, goal."""
+    size = int(2 * half * ppm)
+    img = np.full((size, size, 3), 235, np.uint8)
+    rx, ry = robot.pose.x, robot.pose.y
+    to_px = lambda x, y: (int((y - ry + half) * ppm), int((rx - x + half) * ppm))   # forward = up
+    i0, j0 = grid.cell(rx - half, ry - half)
+    i1, j1 = grid.cell(rx + half, ry + half)
+    for i in range(max(i0, 0), min(i1 + 1, grid.nx)):
+        for j in range(max(j0, 0), min(j1 + 1, grid.ny)):
+            if grid.blocked[i, j]:
+                x, y = grid.centre(i, j)
+                c = (40, 40, 40) if grid.occ[i, j] else (190, 190, 205)
+                u, v = to_px(x, y)
+                cv2.rectangle(img, (u - 2, v - 2), (u + 2, v + 2), c, -1)
+    if nav["path"]:
+        pts = [to_px(x, y) for x, y in [(rx, ry)] + nav["path"]]
+        cv2.polylines(img, [np.array(pts, np.int32)], False, (0, 160, 0), 2)
+    if nav["goal"] is not None:
+        cv2.circle(img, to_px(*nav["goal"]), 7, (0, 0, 220), -1)
+    for k, o in enumerate(seen_obstacles, 1):
+        u, v = to_px(*o["centre"])
+        cv2.putText(img, f"#{k}", (u + 6, v), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 120, 255), 1, cv2.LINE_AA)
+    u, v = to_px(rx, ry)
+    cv2.circle(img, (u, v), 8, (200, 80, 0), -1)
+    hx, hy = to_px(rx + 0.5 * math.cos(robot.pose.yaw), ry + 0.5 * math.sin(robot.pose.yaw))
+    cv2.line(img, (u, v), (hx, hy), (200, 80, 0), 2)
+    for k, line in enumerate([f"robot x={rx:+.1f} y={ry:+.1f}",
+                              "dark = obstacle seen, light = safety margin",
+                              "green = planned path, red = goal"]):
+        cv2.putText(img, line, (8, 18 + 18 * k), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (60, 60, 60), 1, cv2.LINE_AA)
+    cv2.imshow(MAP_WINDOW, img)
+
+
+def navigate(goal, final_tol=0.05):
+    """Walk to goal (x, y) around obstacles: sense -> map -> plan -> follow, replan if blocked."""
+    nav.update(active=True, goal=tuple(goal), path=None)
+    replans, steps, last_logged = 0, 0, None
+    try:
+        while True:
+            if steps % 5 == 0:
+                sense()
+            here = (robot.pose.x, robot.pose.y)
+            if math.hypot(goal[0] - here[0], goal[1] - here[1]) < final_tol:
+                break
+            if nav["path"] is None or (steps % 5 == 0 and grid.path_blocked(nav["path"], start=here)):
+                path = grid.astar(here, goal)
+                if path is None:
+                    safe.stop()
+                    return False, "no free path to the goal"
+                nav["path"] = path[1:] if len(path) > 1 else [tuple(goal)]
+                nav["path"][-1] = tuple(goal)
+                replans += 1
+                if replans > 1 and (last_logged is None or math.hypot(here[0] - last_logged[0],
+                                                                       here[1] - last_logged[1]) > 1.0):
+                    say("   new obstacle on the path - planning a way around it")
+                    last_logged = here
+            wx, wy = nav["path"][0]
+            d = math.hypot(wx - here[0], wy - here[1])
+            if d < (final_tol if len(nav["path"]) == 1 else 0.3):
+                nav["path"].pop(0)
+                if not nav["path"]:
+                    break
+                continue
+            err = math.atan2(math.sin(math.atan2(wy - here[1], wx - here[0]) - robot.pose.yaw),
+                             math.cos(math.atan2(wy - here[1], wx - here[0]) - robot.pose.yaw))
+            if abs(err) > 0.6:                                   # big turn: turn on the spot
+                safe.set_velocity(0.0, 0.0, math.copysign(0.5, err))
+            else:
+                remaining = d if len(nav["path"]) == 1 else 1.0
+                safe.set_velocity(min(0.3, max(0.05, remaining)), 0.0, 2.0 * err)
+            tick()
+            steps += 1
+    finally:
+        safe.stop()
+        nav.update(active=False, path=None)
+    return True, f"arrived ({replans - 1 if replans else 0} replans)"
+
+
+def staging_point(table):
+    t = TABLES[table]
+    (cx, cy), (hx, hy), (fx, fy) = t["center"], t["half"], t["front"]
+    depth = hx if fx else hy
+    return (cx - (depth + STAGING_BACK) * fx, cy - (depth + STAGING_BACK) * fy), math.atan2(fy, fx)
+
+
 # =====================================================================================
 # EXECUTOR: each action returns (ok, reason)
 # =====================================================================================
 memory = {}            # what the robot learned during the task (object position, hand...)
+
+
+def act_go_to_area(target):
+    """Walk to a point in front of the table where the bottle was last seen."""
+    table = LAST_TABLE[target]
+    (sx, sy), yaw = staging_point(table)
+    if math.hypot(sx - robot.pose.x, sy - robot.pose.y) < FAR:
+        return True, f"already near {table.replace('_', ' ')}"
+    say(f"   walking {math.hypot(sx - robot.pose.x, sy - robot.pose.y):.1f} m to {table.replace('_', ' ')}"
+        f" (map starts empty; obstacles are added as they are seen)")
+    ok, reason = navigate((sx, sy))
+    if ok:
+        turn_to(yaw)
+    return ok, f"{reason}; {len(seen_obstacles)} obstacles recognised so far"
 
 
 def act_find(target):
@@ -317,6 +509,7 @@ def act_approach(target):
     walk_to(*xy)
     turn_to(yaw)
     memory.update(side=side, from_table=table, face=np.array([fx, fy, 0.0]))
+    LAST_TABLE[target] = table
     return True, f"at {table.replace('_', ' ')}, using the {side} hand"
 
 
@@ -360,6 +553,7 @@ def act_place(table):
     reach(arm, spot + [0, 0, 0.10], tool=g.local)                  # above the spot
     reach(arm, spot, tol=0.005, tool=g.local)                     # lower it
     g.release(put_at=spot)                                         # stand it upright exactly there
+    LAST_TABLE[g.name] = table
     holding.update(grasp=None, arm=None)
     reach(arm, arm.palm() - 0.10 * memory["face"])                # pull the hand back
     arm_home(arm)
@@ -368,12 +562,17 @@ def act_place(table):
 
 
 def act_return(_):
-    walk_to(START[0], START[1])
+    if math.hypot(START[0] - robot.pose.x, START[1] - robot.pose.y) > FAR:
+        ok, reason = navigate((START[0], START[1]))
+        if not ok:
+            return False, reason
+    else:
+        walk_to(START[0], START[1])
     turn_to(START[2])
     return True, "back at the start position"
 
 
-ACTIONS = {"FIND": act_find, "APPROACH": act_approach, "GRASP": act_grasp, "LIFT": act_lift,
+ACTIONS = {"GO_TO_AREA": act_go_to_area, "FIND": act_find, "APPROACH": act_approach, "GRASP": act_grasp, "LIFT": act_lift,
            "GO_TO_TABLE": act_go_to_table, "PLACE": act_place, "RETURN": act_return}
 
 
@@ -401,6 +600,14 @@ def execute(plan):
             recover()
             return False
     say("TASK COMPLETE")
+    if STONES:
+        found = sum(1 for ob in STONES
+                    if any(np.hypot(ob["pos"][0] - o["centre"][0], ob["pos"][1] - o["centre"][1]) < 0.8
+                           for o in seen_obstacles))
+        near = [ob for ob in STONES if abs(ob["pos"][1]) < 2.5]
+        print(f"\nObstacle report: recognised {len(seen_obstacles)} obstacles on the way; "
+              f"{found} of {len(STONES)} placed stones/boxes were recognised "
+              f"({len(near)} of them lay within 2.5 m of the direct line).")
     return True
 
 

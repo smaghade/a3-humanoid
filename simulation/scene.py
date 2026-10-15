@@ -39,7 +39,7 @@ def _add_object(world, name, pos, radius, half_height, rgba):
                   rgba=rgba, mass=0.3)
 
 
-def build_scene(mjcf_path, with_objects=True, camera_fovy=70.0, camera_tilt_deg=30.0):
+def build_scene(mjcf_path, with_objects=True, camera_fovy=70.0, camera_tilt_deg=30.0, obstacles=None):
     """Return (MjModel, spec): the robot + head camera (+ table and objects if with_objects)."""
     spec = mujoco.MjSpec.from_file(mjcf_path)
     head = _find_body(spec, HEAD_BODY)
@@ -59,6 +59,10 @@ def build_scene(mjcf_path, with_objects=True, camera_fovy=70.0, camera_tilt_deg=
     _add_object(world, "blue_bottle", [1.05, -0.18, 0.87], 0.035, 0.12, [0.1, 0.25, 0.85, 1])
     _add_object(world, "yellow_bottle", [1.05, 0.38, 0.87], 0.035, 0.12, [0.95, 0.85, 0.1, 1])
     _add_object(world, "cup", [1.0, 0.0, 0.80], 0.045, 0.05, [0.95, 0.95, 0.95, 1])
+    for ob in obstacles or []:                                # stones / boxes on the floor
+        body = world.add_body(name=ob["name"], pos=ob["pos"])
+        shape = mujoco.mjtGeom.mjGEOM_ELLIPSOID if ob["shape"] == "stone" else mujoco.mjtGeom.mjGEOM_BOX
+        body.add_geom(type=shape, size=ob["size"], rgba=ob["rgba"])
     model = spec.compile()
 
     for key in spec.keys:                 # keep the objects on the table in the standing pose
