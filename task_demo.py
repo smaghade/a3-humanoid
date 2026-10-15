@@ -23,6 +23,12 @@ Field mode (real-world style): start far away with stones in between
   While walking, the robot recognises the stones with its depth camera, draws them on its
   own map (window "A3 MAP") and plans a path around them (A*). It walks back the same way.
 
+City course (85 m): hill, steps, a road with traffic and a zebra crossing, people and animals
+  python task_demo.py --course --speedup 5 \
+         --say "pick the red bottle from the table and keep it on the empty table"
+  The robot also tracks MOVING things (people, dog, cat, car, motorcycle, bicycle), gives way
+  to them, stops at the road to look left and right, and crosses when the road is clear.
+
 Tables are known places (the robot's map): table_1 has the bottles, table_2 is empty (grey).
 Keys in the MuJoCo window: Space = pause (e-stop), R = resume.
 """
@@ -68,7 +74,11 @@ ap.add_argument("--start-distance", type=float, default=0.0,
 ap.add_argument("--stones", type=int, default=None,
                 help="number of stones/boxes on the way (default: 1 per 5 m when far away)")
 ap.add_argument("--seed", type=int, default=3, help="changes where the stones are")
+ap.add_argument("--course", action="store_true",
+                help="city course: hill, steps, road with traffic, people and animals (85 m)")
 args = ap.parse_args()
+if args.course and args.start_distance <= 0:
+    args.start_distance = 85.0
 
 
 # =====================================================================================
@@ -137,11 +147,23 @@ def make_stones(start_x, n, seed):
 START_X = TABLES["table_1"]["center"][0] - TABLES["table_1"]["half"][0] - args.start_distance \
     if args.start_distance > 0 else 0.0
 n_stones = args.stones if args.stones is not None else (int(args.start_distance // 5) if args.start_distance > 5 else 0)
-STONES = make_stones(START_X, n_stones, args.seed) if n_stones else []
-model, _ = build_scene(cfg["robot"]["mjcf"], with_objects=True, obstacles=STONES)
+course = None
+if args.course:
+    from simulation.course import Course
+    course = Course(START_X, n_stones, args.seed)
+    STONES = course.stones
+    model, spec = build_scene(cfg["robot"]["mjcf"], with_objects=True)
+    course.add_to_spec(spec)
+    model = spec.compile()
+else:
+    STONES = make_stones(START_X, n_stones, args.seed) if n_stones else []
+    model, _ = build_scene(cfg["robot"]["mjcf"], with_objects=True, obstacles=STONES)
 model.vis.map.znear = 0.02 / model.stat.extent      # camera sees from 2 cm, even in a big scene
 robot = KinematicSimRobot(model=model)
 robot.pose.x = START_X
+if course is not None:
+    course.bind(model, robot.d)
+    robot.ground = course.ground
 robot.step(0.0)
 safe = SafetySupervisor(robot, cfg)
 safe.stand()
@@ -166,6 +188,11 @@ if camera is None:                                    # no camera: give the robo
                for dy in np.arange(-r, r + 0.01, 0.05)]
         grid.add_points(np.array(pts))
 seen_obstacles = []                                   # what the robot recognised on the way
+from navigation.tracker import Tracker
+tracker = Tracker()
+SIM = {"t": 0.0}                                       # simulation clock (seconds)
+spotted_ids = set()                                    # moving things already announced
+events = {"waits": 0, "crossings": 0, "gave_way": 0}
 nav = {"active": False, "path": None, "goal": None}
 
 viewer = None
@@ -218,8 +245,11 @@ def tick():
             viewer.sync()
         time.sleep(0.05)
     g = holding["grasp"]
+    SIM["t"] += DT
     if viewer is not None:
         with viewer.lock():
+            if course is not None:
+                course.update(DT, (robot.pose.x, robot.pose.y))
             robot.step(DT)
             if g:
                 g.update()
@@ -232,6 +262,8 @@ def tick():
             look()
         time.sleep(DT / args.speedup)
     else:
+        if course is not None:
+            course.update(DT, (robot.pose.x, robot.pose.y))
         robot.step(DT)
         if g:
             g.update()
@@ -336,7 +368,7 @@ def free_spot(table, target=None):
 # NAVIGATION with obstacle recognition (Day 17): depth camera -> map -> A* path
 # =====================================================================================
 def sense():
-    """Look ahead with the depth camera, recognise obstacles, add them to the map."""
+    """Look with the depth camera: recognise obstacles, follow moving things, update the map."""
     if obstacle_eye is None:
         return []
     if viewer is not None:
@@ -345,10 +377,23 @@ def sense():
     else:
         rgb, depth = camera.capture(robot.d)
     here = (robot.pose.x, robot.pose.y)
-    pts, objects = obstacle_eye.detect(robot.d, depth, here)
-    grid.add_points(pts)
-    for o in objects:                                    # log each NEW obstacle once
-        if o["distance"] > 4.0:
+    if course is None:                                    # flat floor, nothing moves
+        pts, objects = obstacle_eye.detect(robot.d, depth, here)
+        grid.add_points(pts)
+    else:
+        pts, objects = obstacle_eye.detect(robot.d, depth, here, ground=course.ground, track_range=25.0)
+        tracker.update(objects, SIM["t"])
+        for o in objects:
+            tr = o["track"]
+            o.update(label=tr.label, moving=tr.moving, speed=tr.speed)
+            if o["near"] and tr.static:                   # only things that stay still go on the map
+                grid.add_points(o["points"])
+            if tr.moving and tr.id not in spotted_ids and o["distance"] < 20 \
+                    and table_of(tr.pos) is None and not on_known_obstacle(tr.pos):
+                spotted_ids.add(tr.id)
+                say(f"   SPOTTED moving {tr.label}: {tr.speed:.1f} m/s, {o['distance']:.1f} m away")
+    for o in objects:                                     # log each NEW still obstacle once
+        if o["distance"] > 4.0 or o.get("moving") or (course is not None and not o["track"].static):
             continue
         if all(np.hypot(*(o["centre"] - k["centre"])) > 0.7 for k in seen_obstacles):
             seen_obstacles.append(o)
@@ -356,8 +401,8 @@ def sense():
                 f"seen {o['distance']:.1f} m away at x={o['centre'][0]:.1f} y={o['centre'][1]:+.1f}")
     if viewer is not None:
         bgr = draw_obstacles(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), objects)
-        cv2.putText(bgr, f"walking - obstacles recognised so far: {len(seen_obstacles)}", (10, 24),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(bgr, f"obstacles recognised: {len(seen_obstacles)}   moving things seen: {len(spotted_ids)}",
+                    (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
         cv2.imshow(EYES_WINDOW, bgr)
         draw_map()
         cv2.waitKey(1)
@@ -365,11 +410,19 @@ def sense():
 
 
 def draw_map(half=7.0, ppm=40):
-    """Top-down map around the robot: obstacles, safety margin, planned path, goal."""
+    """Top-down map around the robot: terrain, obstacles, safety margin, path, moving things."""
     size = int(2 * half * ppm)
     img = np.full((size, size, 3), 235, np.uint8)
     rx, ry = robot.pose.x, robot.pose.y
     to_px = lambda x, y: (int((y - ry + half) * ppm), int((rx - x + half) * ppm))   # forward = up
+    if course is not None:                                # known terrain from the map
+        from simulation.course import ROAD, STEPS, STEPS_END, HILL
+        for (x0, x1), colour, name in [(ROAD, (90, 90, 90), "ROAD"), ((STEPS["start"], STEPS_END), (150, 170, 190), "STEPS"),
+                                       ((HILL["xc"] - 2 * HILL["sigma"], HILL["xc"] + 2 * HILL["sigma"]), (170, 205, 170), "HILL")]:
+            a, b = to_px(x1, ry - half)[1], to_px(x0, ry - half)[1]
+            if b >= 0 and a <= size:
+                cv2.rectangle(img, (0, max(a, 0)), (size, min(b, size)), colour, -1)
+                cv2.putText(img, name, (size - 70, max(a, 0) + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (40, 40, 40), 1)
     i0, j0 = grid.cell(rx - half, ry - half)
     i1, j1 = grid.cell(rx + half, ry + half)
     for i in range(max(i0, 0), min(i1 + 1, grid.nx)):
@@ -387,21 +440,117 @@ def draw_map(half=7.0, ppm=40):
     for k, o in enumerate(seen_obstacles, 1):
         u, v = to_px(*o["centre"])
         cv2.putText(img, f"#{k}", (u + 6, v), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 120, 255), 1, cv2.LINE_AA)
+    for pos, vel, label in moving_things():               # moving things with their direction
+        u, v = to_px(*pos)
+        cv2.circle(img, (u, v), 9, (255, 0, 255), 2)
+        e = to_px(*(pos + vel * 1.5))
+        cv2.arrowedLine(img, (u, v), e, (255, 0, 255), 2, tipLength=0.3)
+        cv2.putText(img, label, (u + 10, v - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (160, 0, 160), 1, cv2.LINE_AA)
     u, v = to_px(rx, ry)
     cv2.circle(img, (u, v), 8, (200, 80, 0), -1)
     hx, hy = to_px(rx + 0.5 * math.cos(robot.pose.yaw), ry + 0.5 * math.sin(robot.pose.yaw))
     cv2.line(img, (u, v), (hx, hy), (200, 80, 0), 2)
-    for k, line in enumerate([f"robot x={rx:+.1f} y={ry:+.1f}",
-                              "dark = obstacle seen, light = safety margin",
-                              "green = planned path, red = goal"]):
-        cv2.putText(img, line, (8, 18 + 18 * k), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (60, 60, 60), 1, cv2.LINE_AA)
+    for k, line in enumerate([f"robot x={rx:+.1f} y={ry:+.1f}  status: {nav.get('status', '')}",
+                              "dark = obstacle, light = safety margin, green = path",
+                              "pink = moving thing + direction, red = goal"]):
+        cv2.putText(img, line, (8, 18 + 18 * k), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (40, 40, 40), 1, cv2.LINE_AA)
     cv2.imshow(MAP_WINDOW, img)
 
 
+def on_known_obstacle(pos, radius=0.4):
+    """Is there a still obstacle on the robot's map within `radius` of pos?"""
+    i, j = grid.cell(*pos)
+    r = int(radius / grid.res) + 1
+    i0, i1, j0, j1 = max(i - r, 0), min(i + r + 1, grid.nx), max(j - r, 0), min(j + r + 1, grid.ny)
+    return i0 < i1 and j0 < j1 and bool(grid.occ[i0:i1, j0:j1].any())
+
+
+def moving_things():
+    """(position, velocity, label) of the moving things the robot knows about right now."""
+    if obstacle_eye is not None:
+        out = []
+        for tr in tracker.moving():
+            if table_of(tr.pos) is not None or on_known_obstacle(tr.pos):
+                continue          # part of a table/stone seen from a new angle - not really moving
+            out.append((tr.pos, tr.vel, tr.label))
+        return out
+    if course is not None:                                # no camera: true positions
+        here = np.array([robot.pose.x, robot.pose.y])
+        return [(p, v, mv.kind) for mv, p, v in course.visible_movers() if np.hypot(*(p - here)) < 20]
+    return []
+
+
+_T = np.arange(0.0, 4.01, 0.25)
+
+
+def closest_gap(here, heading, speed):
+    """If the robot walks at `speed` (0 = stands, negative = backs up) for the next 4 s, how
+    close does the nearest moving thing come? Only counts things that get CLOSER than they
+    are now. Returns (gap m, label, distance now)."""
+    things = moving_things()
+    if not things:
+        return (1e9, None, None)
+    here = np.asarray(here, float)
+    pos = np.array([p for p, _, _ in things])                      # (N, 2)
+    vel = np.array([v for _, v, _ in things])
+    fwd = np.array([math.cos(heading), math.sin(heading)]) * speed
+    future_things = pos[:, None, :] + vel[:, None, :] * _T[None, :, None]     # (N, T, 2)
+    future_robot = here[None, None, :] + fwd[None, None, :] * _T[None, :, None]
+    gaps = np.hypot(*(future_things - future_robot).transpose(2, 0, 1))      # (N, T)
+    # how much CLOSER than now each thing gets (moving away from something that is already
+    # near is fine; moving towards it is not)
+    gmin = gaps.min(axis=1)
+    worst = np.where(gmin < gaps[:, 0] - 0.05, gmin, 1e9)
+    k = int(np.argmin(worst))
+    return float(worst[k]), things[k][2], float(gaps[k, 0])
+
+
+CLEARANCE = 1.2          # keep at least this far from people, animals and vehicles (m)
+
+
+def look_both_ways():
+    """At the edge of the road: look left and right, wait until no vehicle is coming."""
+    safe.stop()
+    nav["status"] = "at the road: looking left and right"
+    say("   at the road - stopping to look left and right")
+    while True:
+        for yaw in (60, -60, 0):
+            robot.set_head(yaw_deg=yaw, pitch_deg=-10)       # look a little up: see further
+            for k in range(int(1.2 / DT)):
+                if k % 5 == 0:
+                    sense()
+                tick()
+        here = np.array([robot.pose.x, robot.pose.y])
+        coming = [(label, abs(pos[1] - here[1])) for pos, vel, label in moving_things()
+                  if course.road[0] - 1 <= pos[0] <= course.road[1] + 1
+                  and (here[1] - pos[1]) * vel[1] > 0 and abs(pos[1] - here[1]) < 25]
+        if not coming:
+            break
+        label, d = min(coming, key=lambda c: c[1])
+        say(f"   {label} coming, {d:.0f} m away - waiting for it to pass")
+        events["waits"] += 1
+        for k in range(int(2.0 / DT)):
+            if k % 5 == 0:
+                sense()
+            tick()
+    robot.set_head(yaw_deg=0, pitch_deg=0)
+    events["crossings"] += 1
+    say("   road is clear - crossing on the zebra crossing")
+
+
 def navigate(goal, final_tol=0.05):
-    """Walk to goal (x, y) around obstacles: sense -> map -> plan -> follow, replan if blocked."""
-    nav.update(active=True, goal=tuple(goal), path=None)
-    replans, steps, last_logged = 0, 0, None
+    """Walk to goal (x, y) smoothly: sense -> map -> plan -> follow; give way to moving things;
+    look both ways before crossing a road."""
+    nav.update(active=True, goal=tuple(goal), path=None, status="walking")
+    replans, steps, last_logged, last_plan_t = 0, 0, None, -1e9
+    cmd = [0.0, 0.0]                                       # current (forward speed, turn speed)
+    waiting, clear_for, crossing_ok = False, 0.0, False
+
+    def drive(vx, wz):                                     # smooth speed changes
+        cmd[0] += max(-0.6 * DT, min(0.6 * DT, vx - cmd[0]))
+        cmd[1] += max(-2.0 * DT, min(2.0 * DT, wz - cmd[1]))
+        safe.set_velocity(cmd[0], 0.0, cmd[1])
+
     try:
         while True:
             if steps % 5 == 0:
@@ -409,8 +558,10 @@ def navigate(goal, final_tol=0.05):
             here = (robot.pose.x, robot.pose.y)
             if math.hypot(goal[0] - here[0], goal[1] - here[1]) < final_tol:
                 break
-            if nav["path"] is None or (steps % 5 == 0 and grid.path_blocked(nav["path"], start=here)):
+            if nav["path"] is None or (steps % 5 == 0 and SIM["t"] - last_plan_t > 1.0
+                                       and grid.path_blocked(nav["path"], start=here)):
                 path = grid.astar(here, goal)
+                last_plan_t = SIM["t"]
                 if path is None:
                     safe.stop()
                     return False, "no free path to the goal"
@@ -428,18 +579,68 @@ def navigate(goal, final_tol=0.05):
                 if not nav["path"]:
                     break
                 continue
-            err = math.atan2(math.sin(math.atan2(wy - here[1], wx - here[0]) - robot.pose.yaw),
-                             math.cos(math.atan2(wy - here[1], wx - here[0]) - robot.pose.yaw))
-            if abs(err) > 0.6:                                   # big turn: turn on the spot
-                safe.set_velocity(0.0, 0.0, math.copysign(0.5, err))
+            heading = math.atan2(wy - here[1], wx - here[0])
+
+            # ---- road: stop at the edge, look both ways, then cross ----
+            if course is not None:
+                ahead_x = here[0] + 0.8 * math.cos(heading)
+                if not course.on_road(here[0]) and course.on_road(ahead_x) and not crossing_ok:
+                    cmd[:] = [0.0, 0.0]
+                    look_both_ways()
+                    crossing_ok = True
+                    nav["status"] = "crossing the road"
+                    continue
+                if crossing_ok and not course.on_road(here[0]) and not course.on_road(ahead_x):
+                    crossing_ok = False
+                    nav["status"] = "walking"
+
+            # ---- give way to moving things: walk on if safe, otherwise wait (or step back) ----
+            nominal = min(0.3, max(0.05, d if len(nav["path"]) == 1 else 1.0))
+            go = closest_gap(here, robot.pose.yaw, nominal)
+            if waiting:                                            # only walk on when clearly safe
+                if go[0] >= CLEARANCE + 0.3:
+                    clear_for += DT
+                else:
+                    clear_for = 0.0
+                if clear_for < 0.5:
+                    stay = closest_gap(here, robot.pose.yaw, 0.0)
+                    if stay[0] < 0.9 and closest_gap(here, robot.pose.yaw, -0.2)[0] > stay[0]:
+                        safe.set_velocity(-0.2, 0.0, 0.0)          # too close even standing: back off
+                        cmd[:] = [-0.2, 0.0]
+                    else:
+                        safe.stop()
+                        cmd[:] = [0.0, 0.0]
+                    tick()
+                    steps += 1
+                    continue
+                waiting = False
+                say("   way is clear - walking on")
+                nav["status"] = "crossing the road" if crossing_ok else "walking"
+            elif go[0] < CLEARANCE:
+                stay = closest_gap(here, robot.pose.yaw, 0.0)
+                if stay[0] >= go[0]:                               # standing still is safer: wait
+                    say(f"   WAITING: {go[1]} {go[2]:.1f} m away is crossing the way")
+                    events["gave_way"] += 1
+                    nav["status"] = f"waiting for {go[1]}"
+                    waiting, clear_for = True, 0.0
+                    safe.stop()
+                    cmd[:] = [0.0, 0.0]
+                    tick()
+                    steps += 1
+                    continue
+                # walking on is safer than standing (already in its way): keep going
+
+            # ---- follow the path smoothly ----
+            err = math.atan2(math.sin(heading - robot.pose.yaw), math.cos(heading - robot.pose.yaw))
+            if abs(err) > 1.0:                                    # big turn: turn on the spot
+                drive(0.0, math.copysign(0.5, err))
             else:
-                remaining = d if len(nav["path"]) == 1 else 1.0
-                safe.set_velocity(min(0.3, max(0.05, remaining)), 0.0, 2.0 * err)
+                drive(nominal * max(0.0, math.cos(err)), 2.0 * err)
             tick()
             steps += 1
     finally:
         safe.stop()
-        nav.update(active=False, path=None)
+        nav.update(active=False, path=None, status="")
     return True, f"arrived ({replans - 1 if replans else 0} replans)"
 
 
@@ -608,6 +809,13 @@ def execute(plan):
         print(f"\nObstacle report: recognised {len(seen_obstacles)} obstacles on the way; "
               f"{found} of {len(STONES)} placed stones/boxes were recognised "
               f"({len(near)} of them lay within 2.5 m of the direct line).")
+    if course is not None:
+        print(f"Moving things: {len(spotted_ids)} sightings by the camera; the robot gave way "
+              f"{events['gave_way']} times, crossed the road {events['crossings']} times "
+              f"and waited for traffic {events['waits']} times.")
+        print("Closest each moving thing came to the robot (centre to centre):")
+        for name, d in course.min_dist.items():
+            print(f"   {name:11s} {d:5.1f} m")
     return True
 
 

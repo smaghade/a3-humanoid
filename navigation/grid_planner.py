@@ -17,9 +17,13 @@ class OccupancyGrid:
         self.nx = int(math.ceil((x_range[1] - x_range[0]) / res))
         self.ny = int(math.ceil((y_range[1] - y_range[0]) / res))
         self.occ = np.zeros((self.nx, self.ny), bool)       # seen obstacle
-        self.blocked = np.zeros((self.nx, self.ny), bool)   # obstacle + robot radius
+        self.blocked = np.zeros((self.nx, self.ny), bool)   # obstacle + robot radius (for planning)
+        self.tight = np.zeros((self.nx, self.ny), bool)     # obstacle + smaller margin (for "is my
+                                                            # path still OK?" - avoids endless replanning)
         r = int(math.ceil(inflate / res))
         self.disk = [(i, j) for i in range(-r, r + 1) for j in range(-r, r + 1) if i * i + j * j <= r * r]
+        rt = int(math.ceil(0.3 / res))
+        self.disk_tight = [(i, j) for i in range(-rt, rt + 1) for j in range(-rt, rt + 1) if i * i + j * j <= rt * rt]
 
     def cell(self, x, y):
         return int((x - self.x0) / self.res), int((y - self.y0) / self.res)
@@ -44,15 +48,21 @@ class OccupancyGrid:
                 for di, dj in self.disk:
                     if self.inside(i + di, j + dj):
                         self.blocked[i + di, j + dj] = True
+                for di, dj in self.disk_tight:
+                    if self.inside(i + di, j + dj):
+                        self.tight[i + di, j + dj] = True
         return new
 
     def path_blocked(self, path, start=None):
-        """True if any straight piece of the path (from `start`, through every point) crosses a
-        blocked cell. Cells close to the start are ignored (the robot is standing there)."""
+        """True if any straight piece of the path (from `start`, through every point) comes
+        within 0.3 m of a real obstacle. (Planning keeps 0.45 m; this smaller check means a path
+        is only replaced when a NEW obstacle really gets in the way.)"""
         pts = ([tuple(start)] if start is not None else []) + [tuple(p) for p in path]
-        blocked = self._with_escape(start) if start is not None else self.blocked
-        return any(not self._free_line(a, b, blocked) for a, b in zip(pts, pts[1:])) or \
-            (len(pts) == 1 and blocked[self.cell(*pts[0])])
+        tight = self.tight.copy()
+        if start is not None:
+            tight[self.cell(*start)] = False
+        return any(not self._free_line(a, b, tight) for a, b in zip(pts, pts[1:])) or \
+            (len(pts) == 1 and tight[self.cell(*pts[0])])
 
     def _with_escape(self, start, radius=0.8):
         """Copy of the blocked map where safety-margin cells (not real obstacles) near the
