@@ -10,3 +10,5 @@ logs/
 sonic_for_a3/
 data/
 data/
+task_demo_backup*.py
+patch_*.py
