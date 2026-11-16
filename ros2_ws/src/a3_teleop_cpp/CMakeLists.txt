@@ -1,0 +1,18 @@
+# C++ version of teleop.py as a ROS 2 package. Uses the safety supervisor and MockRobot
+# from the project's cpp/ folder (no MuJoCo, OpenCV or graphics needed).
+cmake_minimum_required(VERSION 3.16)
+project(a3_teleop_cpp)
+set(CMAKE_CXX_STANDARD 17)
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(yaml-cpp REQUIRED)
+set(A3_CPP "${CMAKE_CURRENT_SOURCE_DIR}/../../../cpp")
+set(MUJOCO_DIR "$ENV{HOME}/mujoco-3.15.0" CACHE PATH "MuJoCo release folder (headers only are needed)")
+add_executable(teleop src/teleop.cpp ${A3_CPP}/src/safety.cpp ${A3_CPP}/src/config.cpp)
+target_include_directories(teleop PRIVATE ${A3_CPP}/include ${MUJOCO_DIR}/include)
+target_compile_definitions(teleop PRIVATE A3_NO_MUJOCO_LINK)
+target_link_libraries(teleop yaml-cpp)
+ament_target_dependencies(teleop rclcpp geometry_msgs)
+install(TARGETS teleop DESTINATION lib/${PROJECT_NAME})
+ament_package()
